@@ -1,5 +1,6 @@
 ﻿using Microsoft.Xna.Framework;
 using Terraria;
+using Terraria.GameContent;
 using Terraria.ID;
 using TerrariaApi.Server;
 using TShockAPI;
@@ -13,10 +14,10 @@ public class Plugin : TerrariaPlugin
 {
     #region 插件信息
     public static string PluginName => "微光转换枪";
-    public override string Name => PluginName;
-    public override string Author => "羽学";
-    public override Version Version => new(1, 0, 0);
-    public override string Description => "使用微光枪命中掉落物时，按规则转换为指定物品/怪物，支持条件与动画";
+    public override string Name => PluginName + "加强版";
+    public override string Author => "羽学、星梦";
+    public override Version Version => new(1, 0, 2);
+    public override string Description => "微光枪命中掉落物时，按规则转换，支持条件与动画；无规则时回退原版微光或分解";
     #endregion
 
     #region 文件路径
@@ -61,12 +62,27 @@ public class Plugin : TerrariaPlugin
         try
         {
             Config = Configuration.Read();
+            Utils.InitCondMap(Config);   // 确保映射表与配置一致
             Config.Write();
         }
         catch (Exception ex)
         {
             TShock.Log.ConsoleError($"[{PluginName}] 配置文件加载失败：\n{ex.Message}");
         }
+    }
+    #endregion
+
+    #region 玩家离开事件
+    private void OnServerLeave(LeaveEventArgs args)
+    {
+        var plr = TShock.Players[args.Who];
+        if (plr != null) RuleMaker.Clear(plr.Name);
+
+        if (ProjCD.ContainsKey(args.Who))
+            ProjCD.Remove(args.Who);
+
+        Animations.Clear(args.Who);
+        NpcSpawn.Clear(args.Who);
     }
     #endregion
 
@@ -80,111 +96,137 @@ public class Plugin : TerrariaPlugin
         if (proj.type != ProjectileID.ShimmerGunStream) return;
 
         var plr = TShock.Players[proj.owner];
-        if (plr == null || !plr.Active) return;
+        if (plr == null || !plr.Active || !plr.HasPermission(CmdMain.perm)) return;
 
         if (ProjCD.TryGetValue(proj.owner, out long last) && Timer - last < Config.Sec * 60) return;
 
         var box = proj.Hitbox;
         box.Inflate(Config.Hitbox, Config.Hitbox);
+        float rangeSq = (Config.Hitbox * 16 + 100) * (Config.Hitbox * 16 + 100); // 距离平方粗筛
 
-        // 提前获取玩家状态，仅当需要设置目标怪物时才遍历 NPC
-        var makerState = RuleMaker.GetState(plr);
-        if (makerState != null && makerState.Step == 2)
+        // 规则制作模式
+        var state = RuleMaker.GetState(plr);
+        if (state != null && state.Step == 2)
         {
             for (int n = 0; n < Main.maxNPCs; n++)
             {
                 var npc = Main.npc[n];
                 if (!npc.active) continue;
-                if (npc.townNPC || npc.friendly ||
-                    npc.SpawnedFromStatue ||
-                    npc.type == NPCID.TargetDummy ||
-                    npc.type == NPCID.WallofFlesh) continue;
-
+                if (npc.townNPC || npc.friendly || npc.SpawnedFromStatue ||
+                    npc.type == NPCID.TargetDummy || npc.type == NPCID.WallofFlesh) continue;
                 if (box.Intersects(npc.Hitbox))
                 {
                     RuleMaker.SetTargetNpc(plr, npc.type);
-                    return; // 命中怪物且处于规则制作状态，直接返回，不执行转换
+                    return;
                 }
             }
         }
 
-        var items = Main.item.AsSpan();
-        for (int i = 0; i < items.Length; i++)
+        // 物品检测（增加距离过滤）
+        for (int i = 0; i < Main.maxItems; i++)
         {
-            ref WorldItem item = ref items[i];
+            var item = Main.item[i];
             if (item == null || !item.active) continue;
 
+            // 距离粗筛
+            float dx = item.Center.X - proj.Center.X;
+            float dy = item.Center.Y - proj.Center.Y;
+            if (dx * dx + dy * dy > rangeSq) continue;
             if (!box.Intersects(item.Hitbox)) continue;
 
-            // 规则制作：命中物品
-            if (makerState != null && makerState.Step == 2)
+            if (state != null && state.Step == 2)
             {
                 RuleMaker.SetTargetItem(plr, item.type);
                 return;
             }
 
-            // 正常转换逻辑：先检查是否有匹配规则，再更新冷却
             int itemType = item.type;
-            // 获取所有匹配的规则
-            var rules = Config.ConvRules.Where(r => r.SourceID == itemType &&
-            (string.IsNullOrEmpty(r.Cond) || CheckConds(r.CondList, plr.TPlayer))).ToList();
-            if (rules.Count == 0) continue; // 没有规则，跳过
-
-            ProjCD[proj.owner] = Timer;
-
             int srcStack = item.stack;
-            int oldType = item.type;
-            Vector2 pos = item.Center;
+            Vector2 from = item.Center;
+            Vector2 pos = from - new Vector2(0, Config.Height * 16);
 
-            // 删除原物品
-            item.TurnToAir();
-            NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
-
-            // 无动画：每个规则分别生成
-            if (!Config.UseAnim)
+            // 1. 自定义规则（使用索引和整数条件）
+            if (Config.ruleMap.TryGetValue(itemType, out var candidates))
             {
-                foreach (var rule in rules)
-                    ItemSpawn.SpawnAll(rule, pos, plr, oldType, srcStack);
+                // 找出所有匹配当前条件的规则
+                var matched = candidates.Where(r => Utils.CheckConds(r.condIds, plr.TPlayer)).ToList();
+                if (matched.Count > 0)
+                {
+                    ProjCD[proj.owner] = Timer;
+                    item.TurnToAir();
+                    NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
+                    Animations.Fly(proj.owner, from, pos, itemType);
+
+                    foreach (var rule in matched)   // 执行所有匹配的规则
+                    {
+                        int total = rule.Count * srcStack;
+                        foreach (int id in rule.itemIds)
+                            Animations.AddTask(proj.owner, itemType, id, total, pos);
+                        foreach (int npcId in rule.npcIds)
+                            NpcSpawn.AddTask(proj.owner, npcId, total, from);
+                        SendMsg(plr, itemType, srcStack, rule);
+                    }
+                    return;
+                }
+            }
+
+            // 2. 原版微光转换（已使用缓存）
+            int origType = Utils.GetShimmerTransform(itemType);
+            if (origType != 0 && origType != itemType)
+            {
+                ProjCD[proj.owner] = Timer;
+                item.TurnToAir();
+                NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
+
+                int origStack = srcStack;
+                if (ItemID.Sets.CommonCoin[itemType])
+                {
+                    switch (origType)
+                    {
+                        case ItemID.SilverCoin: origStack = srcStack * 100; break;
+                        case ItemID.GoldCoin: origStack = srcStack * 100; break;
+                        case ItemID.PlatinumCoin: origStack = srcStack * 100; break;
+                    }
+                    if (itemType == ItemID.PlatinumCoin && origType == ItemID.GoldCoin)
+                        origStack = srcStack / 100;
+                    if (origStack < 1) origStack = 1;
+                }
+
+                Animations.Fly(proj.owner, from, pos, itemType);
+                Animations.AddTask(proj.owner, itemType, origType, origStack, pos);
+                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 转换为 {Icon(origType, origStack)}"), color);
                 return;
             }
 
-            // 动画模式
-            bool animated = false;
-            foreach (var rule in rules)
+            // 3. 原版分解（已使用缓存）
+            var mats = Utils.GetDecraft(itemType, srcStack);
+            if (mats.Count > 0)
             {
-                int perCount = rule.Count;
-                int total = perCount * srcStack;
+                ProjCD[proj.owner] = Timer;
+                item.TurnToAir();
+                NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
 
-                // 处理物品
-                foreach (int id in rule.ItemIDs)
+                int delay = 0;
+                foreach (var mat in mats)
                 {
-                    if (!animated && id == rule.ItemIDs.FirstOrDefault())
+                    Vector2 matPos = pos;
+                    int offPx = Config.SpawnOffset * 16;
+                    if (offPx > 0)
                     {
-                        // 第一个规则的第一个物品：播放飞行动画（只生成1个）
-                        Vector2 fromPos = pos;
-                        Vector2 toPos = fromPos - new Vector2(0, Config.Height * 16);
-                        var anim = new AnimData();
-                        anim.OwnerIdx = plr.Index;
-                        anim.ItemIdx = i;
-                        anim.Queue.Enqueue(new AnimReq { Type = AnimType.Fly, ItemType = oldType, From = fromPos, To = toPos });
-                        anim.Queue.Enqueue(new AnimReq { plr = plr, Type = AnimType.Spawn, ItemType = oldType, NewType = id, From = toPos, SrcStack = srcStack, OldType = oldType, Rule = rule });
-                        anim.NextFrame = Timer;
-                        Animation.AnimList.Add(anim);
-                        animated = true;
-
-                        // 如果数量大于1，多余部分原地生成
-                        if (total > 1)
-                            ItemSpawn.SpawnItem(id, total - 1, pos);
+                        float offX = Main.rand.Next(-offPx, offPx + 1);
+                        float offY = Main.rand.Next(-offPx, offPx + 1);
+                        matPos = pos + new Vector2(offX, offY);
+                        matPos.X = Math.Clamp(matPos.X, 32, (Main.maxTilesX - 1) * 16);
+                        matPos.Y = Math.Clamp(matPos.Y, 32, (Main.maxTilesY - 1) * 16);
                     }
-                    else
-                    {
-                        // 其他规则或剩余数量原地生成
-                        ItemSpawn.SpawnItem(id, total, pos);
-                    }
+                    Animations.AddTask(proj.owner, itemType, mat.typ, mat.stack, matPos, delay);
+                    delay += Config.SpawnDelay;
                 }
-                // 处理怪物（始终原地生成，延迟队列）
-                foreach (int npcId in rule.NpcIDs)
-                    NpcSpawn.SpawnNpc(npcId, total, pos, plr.Index);
+
+                Animations.Fly(proj.owner, from, pos, itemType);
+                string matsStr = string.Join(" ", mats.Select(m => Icon(m.typ, m.stack)));
+                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 分解出\n {matsStr}"), color2);
+                return;
             }
         }
     }
@@ -195,27 +237,46 @@ public class Plugin : TerrariaPlugin
     private void OnGameUpdate(EventArgs args)
     {
         if (!Config.Enabled) return;
+
         Timer++;
 
-        Animation.Update(Timer);
+        if (Timer % 600 == 0) ProjCD.Clear();
+
+        Animations.Update(Timer);
         NpcSpawn.Update(Timer);
         RuleMaker.CheckTimeouts();
-
-        if (Timer % 600 == 0) ProjCD.Clear();
     }
     #endregion
 
-    #region 玩家离开事件
-    private void OnServerLeave(LeaveEventArgs args)
+    #region 物品生成
+    public static void SpawnItem(int type, int total, Vector2 pos, int owner)
     {
-        var plr = TShock.Players[args.Who];
-        if (plr != null) RuleMaker.Clear(plr.Name);
-
-        if (ProjCD.ContainsKey(args.Who))
-            ProjCD.Remove(args.Who);
-
-        Animation.Clear(args.Who);
-        NpcSpawn.Clear(args.Who);
+        int remain = total;
+        while (remain > 0)
+        {
+            int stack = Math.Min(remain, ContentSamples.ItemsByType[type].maxStack);
+            int newIdx = Item.NewItem(null, pos, Vector2.Zero, type, stack);
+            if (newIdx >= 0)
+            {
+                var newItem = Main.item[newIdx];
+                newItem.velocity = Vector2.Zero;
+                newItem.playerIndexTheItemIsReservedFor = owner;
+                NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, newIdx);
+            }
+            remain -= stack;
+        }
     }
+    #endregion
+
+    #region 发送消息
+    public static void SendMsg(TSPlayer plr, int oldType, int srcStack, ConvRule rule)
+    {
+        int stack = rule.Count * srcStack;
+        string desc = string.Join("、",
+            rule.itemIds.Select(id => Icon(id, stack))
+            .Concat(rule.npcIds.Select(id => $"{Lang.GetNPCNameValue(id)}x{stack}")));
+
+        plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(oldType, srcStack)} 转换为 {desc}"), color);
+    } 
     #endregion
 }

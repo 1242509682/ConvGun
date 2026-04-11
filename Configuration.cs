@@ -1,31 +1,12 @@
-﻿using Newtonsoft.Json;
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
+using Newtonsoft.Json;
 using Terraria;
+using Terraria.GameContent.Drawing;
 using Terraria.ID;
+using TShockAPI;
 using static ConvGun.Plugin;
 
 namespace ConvGun;
-
-/// <summary>
-/// 转换规则（一个源物品对应多个目标物品和怪物）
-/// </summary>
-public class ConvRule
-{
-    [JsonProperty("描述")]
-    public string Desc { get; set; } = "";
-    [JsonProperty("源物品")]
-    public int SourceID { get; set; }
-    [JsonProperty("物品")]
-    public List<int> ItemIDs { get; set; } = new();
-    [JsonProperty("怪物")]
-    public List<int> NpcIDs { get; set; } = new();
-    [JsonProperty("数量")]
-    public int Count { get; set; } = 1;
-    [JsonProperty("条件")]
-    public string Cond { get; set; } = "";   // 多个条件用逗号分隔，如 "晚上,血月"
-    [JsonIgnore]
-    public List<string> CondList => string.IsNullOrEmpty(Cond) ? new List<string>() : Cond.Split(',').Select(c => c.Trim()).ToList();
-}
 
 internal class Configuration
 {
@@ -40,16 +21,35 @@ internal class Configuration
     public int Height { get; set; } = 5;
     [JsonProperty("冷却秒数", Order = 3)]
     public int Sec { get; set; } = 2;
-    [JsonProperty("启用动画", Order = 4)]
-    public bool UseAnim { get; set; } = true;
-    [JsonProperty("动画帧数", Order = 5)]
-    public int DelayFrames { get; set; } = 60;
-    [JsonProperty("怪物生成偏移(格数)", Order = 7)]
-    public int SpawnOffset { get; set; } = 10;
-    [JsonProperty("怪物生成间隔(帧)", Order = 8)]
+    [JsonProperty("动画间隔", Order = 4)]
+    public int DelayFrames { get; set; } = 90;
+    [JsonProperty("生成偏移", Order = 5)]
+    public int SpawnOffset { get; set; } = 5;
+    [JsonProperty("生成间隔", Order = 6)]
     public int SpawnDelay { get; set; } = 15;
-    [JsonProperty("转换规则列表", Order = 10)]
+    [JsonProperty("随机动画", Order = 7)]
+    public ParticleOrchestraType[] AnimType { get; set; } =
+    [
+        ParticleOrchestraType.ShimmerArrow,
+        ParticleOrchestraType.ShimmerTownNPC,
+        ParticleOrchestraType.DeadCellsMushroomBoiExplosion,
+        ParticleOrchestraType.DeadCellsDownDashExplosion,
+        ParticleOrchestraType.DeadCellsBarrelExplosion,
+        ParticleOrchestraType.DeadCellsMushroomBoiTargetFound,
+        ParticleOrchestraType.RainbowBoulder1,
+        ParticleOrchestraType.RainbowBoulder4,
+        ParticleOrchestraType.StormLightning,
+        ParticleOrchestraType.CattivaHit,
+        ParticleOrchestraType.PaladinsHammerShockwave,
+        ParticleOrchestraType.Count,
+    ];
+
+    [JsonProperty("转换规则列表", Order = 8)]
     public List<ConvRule> ConvRules { get; set; } = new();
+
+    // 规则索引：源物品ID -> 规则列表（不超过10字符）
+    [JsonIgnore]
+    public Dictionary<int, List<ConvRule>> ruleMap = new();
     #endregion
 
     #region 预设参数方法
@@ -61,64 +61,51 @@ internal class Configuration
         AddMixedRule(ItemID.PlatinumCoin, new List<int>(), new List<int> { NPCID.Zombie, NPCID.DemonEye }, 43, 2);
 
         // 迁移自定义微光转换表
-        AddItemRule(ItemID.RodofDiscord, ItemID.RodOfHarmony, 21);
-        AddItemRule(ItemID.Clentaminator, ItemID.Clentaminator2, 21);
-        AddItemRule(ItemID.BottomlessBucket, ItemID.BottomlessShimmerBucket, 21);
-        AddItemRule(ItemID.BottomlessShimmerBucket, ItemID.BottomlessBucket, 21);
-        AddItemRule(ItemID.JungleKey, ItemID.PiranhaGun, 15);
-        AddItemRule(ItemID.CorruptionKey, ItemID.ScourgeoftheCorruptor, 15);
-        AddItemRule(ItemID.CrimsonKey, ItemID.VampireKnives, 15);
-        AddItemRule(ItemID.HallowedKey, ItemID.RainbowGun, 15);
-        AddItemRule(ItemID.FrozenKey, ItemID.StaffoftheFrostHydra, 15);
-        AddItemRule(ItemID.DungeonDesertKey, ItemID.StormTigerStaff, 15);
-        AddItemRule(ItemID.CobaltOre, ItemID.Hellstone, 11);
-        AddItemRule(ItemID.Amber, ItemID.Diamond);
-        AddItemRule(ItemID.ShadowGreaves, ItemID.DemoniteBar, 5);
-        AddItemRule(ItemID.ShadowScalemail, ItemID.DemoniteBar, 5);
-        AddItemRule(ItemID.ShadowHelmet, ItemID.DemoniteBar, 5);
-        AddSwapRule(ItemID.DemoniteOre, ItemID.CrimtaneOre);
-        AddSwapRule(ItemID.Compass, ItemID.DepthMeter);
-        AddSwapRule(ItemID.LifeformAnalyzer, ItemID.Radar);
-        AddItemRule(ItemID.Radar, ItemID.TallyCounter, 9);
-        AddSwapRule(ItemID.TallyCounter, ItemID.LifeformAnalyzer);
-        AddSwapRule(ItemID.DPSMeter, ItemID.MetalDetector);
-        AddSwapRule(ItemID.MetalDetector, ItemID.Stopwatch);
-        AddSwapRule(ItemID.Stopwatch, ItemID.DPSMeter);
-        AddSwapRule(ItemID.MagicConch, ItemID.DemonConch);
-        AddSwapRule(ItemID.SunStone, ItemID.MoonStone, 16);
-        AddSwapRule(ItemID.TorchGodsFavor, ItemID.ArtisanLoaf);
-        AddSwapRule(ItemID.ScarabFishingRod, ItemID.FiberglassFishingPole);
-        AddItemRule(ItemID.FiberglassFishingPole, ItemID.BloodFishingRod);
-        AddItemRule(ItemID.BloodFishingRod, ItemID.ScarabFishingRod);
-        AddSwapRule(ItemID.Stinkbug, ItemID.LadyBug);
-        AddCycleRule(ItemID.ShadowFlameBow, ItemID.ShadowFlameHexDoll, ItemID.ShadowFlameKnife, 11);
-        AddSwapRule(ItemID.CrossNecklace, ItemID.PhilosophersStone, 11);
-        AddSwapRule(ItemID.MagicDagger, ItemID.CrystalSerpent, 11);
-        AddSwapRule(ItemID.Marrow, ItemID.Uzi, 11);
-        AddSwapRule(ItemID.DaedalusStormbow, ItemID.FlyingKnife, 11);
-        AddCycleRule(ItemID.MonkStaffT1, ItemID.DD2PhoenixBow, ItemID.MonkStaffT2, ItemID.DD2SquireDemonSword, 11);
-        AddSwapRule(ItemID.DarkShard, ItemID.LightShard, 11);
-        AddSwapRule(ItemID.AncientBattleArmorMaterial, ItemID.FrostCore, 11);
-        AddSwapRule(ItemID.Ichor, ItemID.CursedFlame, 11);
-        AddSwapRule(ItemID.Vertebrae, ItemID.RottenChunk);
-        AddSwapRule(ItemID.ViciousMushroom, ItemID.VileMushroom);
-        AddSwapRule(ItemID.CloudinaBottle, ItemID.TsunamiInABottle);
-        AddSwapRule(ItemID.SandstorminaBottle, ItemID.BlizzardinaBottle);
-        AddSwapRule(ItemID.IceSkates, ItemID.FlowerBoots);
-        AddSwapRule(ItemID.SharkFin, ItemID.Feather);
-        AddSwapRule(ItemID.JungleRose, ItemID.NaturesGift);
-        AddSwapRule(ItemID.ShadowScale, ItemID.TissueSample, 5);
-        AddSwapRule(ItemID.RainbowBrick, ItemID.EchoBlock, 13);
-        AddItemRule(ItemID.PaladinsHammer, ItemID.PaladinsShield, 15);
-        AddSwapRule(ItemID.TatteredCloth, ItemID.FlinxFur);
-        AddSwapRule(ItemID.CorruptSeeds, ItemID.CrimsonSeeds);
-        AddSwapRule(ItemID.HermesBoots, ItemID.SailfishBoots);
-        AddSwapRule(ItemID.Tabi, ItemID.BlackBelt, 15);
-        AddSwapRule(ItemID.ClimbingClaws, ItemID.ShoeSpikes);
-        AddSwapRule(ItemID.WarTable, ItemID.DefendersForge, 33);
-        AddSwapRule(ItemID.DryBomb, ItemID.ScarabBomb);
-        AddItemRule(ItemID.TempleKey, ItemID.SolarTablet, 16);
-        AddCycleRule(ItemID.BrickLayer, ItemID.ExtendoGrip, ItemID.PaintSprayer, ItemID.PortableCementMixer);
+        AB(ItemID.JungleKey, ItemID.PiranhaGun, 15);
+        AB(ItemID.CorruptionKey, ItemID.ScourgeoftheCorruptor, 15);
+        AB(ItemID.CrimsonKey, ItemID.VampireKnives, 15);
+        AB(ItemID.HallowedKey, ItemID.RainbowGun, 15);
+        AB(ItemID.FrozenKey, ItemID.StaffoftheFrostHydra, 15);
+        AB(ItemID.DungeonDesertKey, ItemID.StormTigerStaff, 15);
+        AB(ItemID.CobaltOre, ItemID.Hellstone, 11);
+        AB(ItemID.Amber, ItemID.Diamond);
+        ABA(ItemID.DemoniteOre, ItemID.CrimtaneOre);
+        ABA(ItemID.Compass, ItemID.DepthMeter);
+
+        AB(ItemID.LifeformAnalyzer, ItemID.Radar);
+        AB(ItemID.Radar, ItemID.TallyCounter,9);
+        AB(ItemID.TallyCounter, ItemID.LifeformAnalyzer);
+
+        ABCA(ItemID.DPSMeter, ItemID.MetalDetector, ItemID.Stopwatch);
+        ABA(ItemID.MagicConch, ItemID.DemonConch);
+        ABA(ItemID.SunStone, ItemID.MoonStone, 16);
+        ABA(ItemID.TorchGodsFavor, ItemID.ArtisanLoaf);
+        ABCA(ItemID.ScarabFishingRod, ItemID.FiberglassFishingPole, ItemID.BloodFishingRod);
+        ABA(ItemID.Stinkbug, ItemID.LadyBug);
+        ABCA(ItemID.ShadowFlameBow, ItemID.ShadowFlameHexDoll, ItemID.ShadowFlameKnife, 11);
+        ABA(ItemID.CrossNecklace, ItemID.PhilosophersStone, 11);
+        ABA(ItemID.DaedalusStormbow, ItemID.FlyingKnife, 11);
+        ABCDA(ItemID.MonkStaffT1, ItemID.DD2PhoenixBow, ItemID.MonkStaffT2, ItemID.DD2SquireDemonSword, 11);
+        ABA(ItemID.DarkShard, ItemID.LightShard, 11);
+        ABA(ItemID.AncientBattleArmorMaterial, ItemID.FrostCore, 11);
+        ABA(ItemID.Ichor, ItemID.CursedFlame, 11);
+        ABA(ItemID.Vertebrae, ItemID.RottenChunk);
+        ABA(ItemID.ViciousMushroom, ItemID.VileMushroom);
+        ABCDA(ItemID.CloudinaBottle, ItemID.TsunamiInABottle, ItemID.SandstorminaBottle, ItemID.BlizzardinaBottle);
+        ABA(ItemID.IceSkates, ItemID.FlowerBoots);
+        ABA(ItemID.SharkFin, ItemID.Feather);
+        ABA(ItemID.JungleRose, ItemID.NaturesGift);
+        ABA(ItemID.ShadowScale, ItemID.TissueSample, 5);
+        ABA(ItemID.PaladinsHammer, ItemID.PaladinsShield, 15);
+        ABA(ItemID.TatteredCloth, ItemID.FlinxFur);
+        ABA(ItemID.CorruptSeeds, ItemID.CrimsonSeeds);
+        ABA(ItemID.HermesBoots, ItemID.SailfishBoots);
+        ABA(ItemID.Tabi, ItemID.BlackBelt, 15);
+        ABA(ItemID.ClimbingClaws, ItemID.ShoeSpikes);
+        ABA(ItemID.WarTable, ItemID.DefendersForge, 33);
+        ABA(ItemID.DryBomb, ItemID.ScarabBomb);
+        AB(ItemID.TempleKey, ItemID.SolarTablet, 16);
+        ABCDA(ItemID.BrickLayer, ItemID.ExtendoGrip, ItemID.PaintSprayer, ItemID.PortableCementMixer);
 
         Reference =
         [
@@ -145,10 +132,10 @@ internal class Configuration
         if (ConvRules == null || !ConvRules.Any()) return;
         foreach (var rule in ConvRules)
         {
-            if (rule.ItemIDs.Count == 0 && rule.NpcIDs.Count == 0) continue;
+            if (rule.itemIds.Count == 0 && rule.npcIds.Count == 0) continue;
             string targetsDesc = string.Join(", ",
-                rule.ItemIDs.Select(id => $"{Lang.GetItemNameValue(id)}x{rule.Count}")
-                .Concat(rule.NpcIDs.Select(id => $"{Lang.GetNPCNameValue(id)}x{rule.Count}")));
+                rule.itemIds.Select(id => $"{Lang.GetItemNameValue(id)}x{rule.Count}")
+                .Concat(rule.npcIds.Select(id => $"{Lang.GetNPCNameValue(id)}x{rule.Count}")));
 
             string condStr = "无条件";
             if (!string.IsNullOrEmpty(rule.Cond))
@@ -174,6 +161,8 @@ internal class Configuration
         {
             var cfg = new Configuration();
             cfg.SetDefault();
+            Utils.InitCondMap(cfg);   // 新增：初始化条件映射表
+            cfg.BuildRuleIdx();
             cfg.AutoRuleDesc();
             cfg.Write();
             return cfg;
@@ -183,6 +172,8 @@ internal class Configuration
             string json = File.ReadAllText(ConfigPath);
             var cfg = JsonConvert.DeserializeObject<Configuration>(json)!;
             cfg.BuildCondNames();   // 重新构建条件名称数组
+            Utils.InitCondMap(cfg);   // 新增：使用当前配置初始化映射表
+            cfg.BuildRuleIdx();
             cfg.AutoRuleDesc();
             return cfg;
         }
@@ -209,51 +200,17 @@ internal class Configuration
     #endregion
 
     #region 辅助添加规则方法
-    private void AddItemRule(int source, int target, int condIdx = 0, int count = 1)
+    private void AB(int source, int target, int condIdx = 0, int count = 1)
     {
         string condStr = condIdx == 0 ? "" : condIdx.ToString();
         ConvRules.Add(new ConvRule
         {
             SourceID = source,
-            ItemIDs = new List<int> { target },
-            NpcIDs = new List<int>(),
+            Items = target.ToString(),      // 单个ID转为字符串
+            Npcs = string.Empty,
             Count = count,
             Cond = condStr
         });
-    }
-
-    private void AddNpcRule(int source, int npc, int condIdx = 0, int count = 1)
-    {
-        string condStr = condIdx == 0 ? "" : condIdx.ToString();
-        ConvRules.Add(new ConvRule
-        {
-            SourceID = source,
-            ItemIDs = new List<int>(),
-            NpcIDs = new List<int> { npc },
-            Count = count,
-            Cond = condStr
-        });
-    }
-
-    private void AddSwapRule(int id1, int id2, int condIdx = 0)
-    {
-        AddItemRule(id1, id2, condIdx);
-        AddItemRule(id2, id1, condIdx);
-    }
-
-    private void AddCycleRule(int id1, int id2, int id3, int condIdx = 0)
-    {
-        AddItemRule(id1, id2, condIdx);
-        AddItemRule(id2, id3, condIdx);
-        AddItemRule(id3, id1, condIdx);
-    }
-
-    private void AddCycleRule(int id1, int id2, int id3, int id4, int condIdx = 0)
-    {
-        AddItemRule(id1, id2, condIdx);
-        AddItemRule(id2, id3, condIdx);
-        AddItemRule(id3, id4, condIdx);
-        AddItemRule(id4, id1, condIdx);
     }
 
     /// <summary>添加混合规则（同时包含物品和怪物）</summary>
@@ -263,11 +220,47 @@ internal class Configuration
         ConvRules.Add(new ConvRule
         {
             SourceID = source,
-            ItemIDs = items,
-            NpcIDs = npcs,
+            Items = string.Join(",", items),   // 列表转为逗号分隔字符串
+            Npcs = string.Join(",", npcs),
             Count = count,
             Cond = condStr
         });
+    }
+
+    /// <summary>单向链规则：A → B → C</summary>
+    private void ABC(int a, int b, int c, int condIdx = 0)
+    {
+        AB(a, b, condIdx);
+        AB(b, c, condIdx);
+    }
+
+    /// <summary>单向链规则：A → B → C → D</summary>
+    private void ABCD(int a, int b, int c, int d, int condIdx = 0)
+    {
+        AB(a, b, condIdx);
+        AB(b, c, condIdx);
+        AB(c, d, condIdx);
+    }
+
+    private void ABA(int id1, int id2, int condIdx = 0)
+    {
+        AB(id1, id2, condIdx);
+        AB(id2, id1, condIdx);
+    }
+
+    private void ABCA(int id1, int id2, int id3, int condIdx = 0)
+    {
+        AB(id1, id2, condIdx);
+        AB(id2, id3, condIdx);
+        AB(id3, id1, condIdx);
+    }
+
+    private void ABCDA(int id1, int id2, int id3, int id4, int condIdx = 0)
+    {
+        AB(id1, id2, condIdx);
+        AB(id2, id3, condIdx);
+        AB(id3, id4, condIdx);
+        AB(id4, id1, condIdx);
     }
     #endregion
 
@@ -300,6 +293,60 @@ internal class Configuration
                     idx++;
                 }
             }
+        }
+    }
+    #endregion
+
+    #region 重建规则索引与条件同步
+    public void BuildRuleIdx()
+    {
+        ruleMap.Clear();
+        foreach (var rule in ConvRules)
+        {
+            // 解析物品ID字符串（格式："73,676" 或 "73" 或 ""）
+            rule.itemIds.Clear();
+            if (!string.IsNullOrEmpty(rule.Items))
+            {
+                foreach (var part in rule.Items.Split(','))
+                {
+                    if (int.TryParse(part.Trim(), out int id))
+                        rule.itemIds.Add(id);
+                    else
+                        TShock.Log.ConsoleError($"[ConvGun] 规则中无效物品ID '{part.Trim()}'，源物品 {rule.SourceID}");
+                }
+            }
+
+            // 解析怪物ID字符串
+            rule.npcIds.Clear();
+            if (!string.IsNullOrEmpty(rule.Npcs))
+            {
+                foreach (var part in rule.Npcs.Split(','))
+                {
+                    if (int.TryParse(part.Trim(), out int id))
+                        rule.npcIds.Add(id);
+                    else
+                        TShock.Log.ConsoleError($"[ConvGun] 规则中无效怪物ID '{part.Trim()}'，源物品 {rule.SourceID}");
+                }
+            }
+
+            // 解析条件ID（保持不变）
+            rule.condIds.Clear();
+            if (!string.IsNullOrEmpty(rule.Cond))
+            {
+                foreach (var part in rule.Cond.Split(','))
+                {
+                    int id = Utils.GetCondId(part.Trim());
+                    if (id >= 0)
+                        rule.condIds.Add(id);
+                    else
+                        TShock.Log.ConsoleError($"[ConvGun] 规则中未知条件 '{part.Trim()}'，源物品 {rule.SourceID} 将作为无条件规则处理");
+                }
+            }
+
+            // 构建索引
+            if (!ruleMap.ContainsKey(rule.SourceID))
+                ruleMap[rule.SourceID] = new List<ConvRule>();
+            ruleMap[rule.SourceID].Add(rule);
         }
     }
     #endregion

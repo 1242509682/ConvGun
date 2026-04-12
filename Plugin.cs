@@ -1,6 +1,5 @@
 ﻿using Microsoft.Xna.Framework;
 using Terraria;
-using Terraria.GameContent;
 using Terraria.ID;
 using TerrariaApi.Server;
 using TShockAPI;
@@ -16,7 +15,7 @@ public class Plugin : TerrariaPlugin
     public static string PluginName => "微光转换枪";
     public override string Name => PluginName + "加强版";
     public override string Author => "羽学、星梦";
-    public override Version Version => new(1, 0, 2);
+    public override Version Version => new(1, 0, 3);
     public override string Description => "微光枪命中掉落物时，按规则转换，支持条件与动画；无规则时回退原版微光或分解";
     #endregion
 
@@ -33,6 +32,7 @@ public class Plugin : TerrariaPlugin
         ServerApi.Hooks.ProjectileAIUpdate.Register(this, OnProjAI);
         ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
         ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
+        GetDataHandlers.PlayerSlot.Register(OnPlayerSlot);
         Commands.ChatCommands.Add(new Command(CmdMain.perm, CmdMain.SgCmd, "sg"));
     }
 
@@ -44,6 +44,7 @@ public class Plugin : TerrariaPlugin
             ServerApi.Hooks.ProjectileAIUpdate.Deregister(this, OnProjAI);
             ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
             ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
+            GetDataHandlers.PlayerSlot.UnRegister(OnPlayerSlot);
             Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == CmdMain.SgCmd);
         }
         base.Dispose(disposing);
@@ -77,11 +78,7 @@ public class Plugin : TerrariaPlugin
     {
         var plr = TShock.Players[args.Who];
         if (plr != null) RuleMaker.Clear(plr.Name);
-
-        if (ProjCD.ContainsKey(args.Who))
-            ProjCD.Remove(args.Who);
-
-        Animations.Clear(args.Who);
+        if (ProjCD.ContainsKey(args.Who)) ProjCD.Remove(args.Who);
         NpcSpawn.Clear(args.Who);
     }
     #endregion
@@ -122,16 +119,11 @@ public class Plugin : TerrariaPlugin
             }
         }
 
-        // 物品检测（增加距离过滤）
+        // 物品检测
         for (int i = 0; i < Main.maxItems; i++)
         {
             var item = Main.item[i];
-            if (item == null || !item.active) continue;
-
-            // 距离粗筛
-            float dx = item.Center.X - proj.Center.X;
-            float dy = item.Center.Y - proj.Center.Y;
-            if (dx * dx + dy * dy > rangeSq) continue;
+            if (item == null || !item.active || item.IsAir) continue;
             if (!box.Intersects(item.Hitbox)) continue;
 
             if (state != null && state.Step == 2)
@@ -152,20 +144,29 @@ public class Plugin : TerrariaPlugin
                 var matched = candidates.Where(r => Utils.CheckConds(r.condIds, plr.TPlayer)).ToList();
                 if (matched.Count > 0)
                 {
-                    ProjCD[proj.owner] = Timer;
-                    item.TurnToAir();
-                    NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
-                    Animations.Fly(proj.owner, from, pos, itemType);
+                    Animations.Effect(from);
+                    ClearItem(i);
+                    Animations.Fly(from, pos, itemType);
 
                     foreach (var rule in matched)   // 执行所有匹配的规则
                     {
                         int total = rule.Count * srcStack;
                         foreach (int id in rule.itemIds)
-                            Animations.AddTask(proj.owner, itemType, id, total, pos);
+                            Animations.AddTask(itemType, id, total, pos);
                         foreach (int npcId in rule.npcIds)
                             NpcSpawn.AddTask(proj.owner, npcId, total, from);
                         SendMsg(plr, itemType, srcStack, rule);
+
+                        if (rule.Luck != 0f)
+                        {
+                            float luck = rule.Luck * srcStack;
+                            plr.TPlayer.luck += luck;
+                            plr.SendData(PacketTypes.UpdatePlayerLuckFactors, "", plr.Index, luck);
+                            plr.SendMessage(Grad($"恭喜！转换 {Icon(itemType)} 获得 {luck:F2} 点运气！当前幸运值：{plr.TPlayer.luck:F2}"), color);
+                        }
                     }
+
+                    ProjCD[proj.owner] = Timer;
                     return;
                 }
             }
@@ -174,27 +175,13 @@ public class Plugin : TerrariaPlugin
             int origType = Utils.GetShimmerTransform(itemType);
             if (origType != 0 && origType != itemType)
             {
+                Animations.Effect(from);
+                ClearItem(i);
+                Animations.Fly(from, pos, itemType);
+                Animations.AddTask(itemType, origType, srcStack, pos);
+                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 转换为 {Icon(origType, srcStack)}"), color);
+
                 ProjCD[proj.owner] = Timer;
-                item.TurnToAir();
-                NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
-
-                int origStack = srcStack;
-                if (ItemID.Sets.CommonCoin[itemType])
-                {
-                    switch (origType)
-                    {
-                        case ItemID.SilverCoin: origStack = srcStack * 100; break;
-                        case ItemID.GoldCoin: origStack = srcStack * 100; break;
-                        case ItemID.PlatinumCoin: origStack = srcStack * 100; break;
-                    }
-                    if (itemType == ItemID.PlatinumCoin && origType == ItemID.GoldCoin)
-                        origStack = srcStack / 100;
-                    if (origStack < 1) origStack = 1;
-                }
-
-                Animations.Fly(proj.owner, from, pos, itemType);
-                Animations.AddTask(proj.owner, itemType, origType, origStack, pos);
-                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 转换为 {Icon(origType, origStack)}"), color);
                 return;
             }
 
@@ -202,15 +189,15 @@ public class Plugin : TerrariaPlugin
             var mats = Utils.GetDecraft(itemType, srcStack);
             if (mats.Count > 0)
             {
-                ProjCD[proj.owner] = Timer;
-                item.TurnToAir();
-                NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
+                Animations.Effect(from);
+                ClearItem(i);
+                Animations.Fly(from, pos, itemType);
 
                 int delay = 0;
                 foreach (var mat in mats)
                 {
                     Vector2 matPos = pos;
-                    int offPx = Config.SpawnOffset * 16;
+                    int offPx = Config.SpawnOff * 16;
                     if (offPx > 0)
                     {
                         float offX = Main.rand.Next(-offPx, offPx + 1);
@@ -219,13 +206,16 @@ public class Plugin : TerrariaPlugin
                         matPos.X = Math.Clamp(matPos.X, 32, (Main.maxTilesX - 1) * 16);
                         matPos.Y = Math.Clamp(matPos.Y, 32, (Main.maxTilesY - 1) * 16);
                     }
-                    Animations.AddTask(proj.owner, itemType, mat.typ, mat.stack, matPos, delay);
-                    delay += Config.SpawnDelay;
+                    Animations.AddTask(itemType, mat.typ, mat.stack, matPos, delay);
+
+                    if (Config.Delay)
+                        delay += Config.DelayTime;
                 }
 
-                Animations.Fly(proj.owner, from, pos, itemType);
                 string matsStr = string.Join(" ", mats.Select(m => Icon(m.typ, m.stack)));
                 plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 分解出\n {matsStr}"), color2);
+
+                ProjCD[proj.owner] = Timer;
                 return;
             }
         }
@@ -240,31 +230,9 @@ public class Plugin : TerrariaPlugin
 
         Timer++;
 
-        if (Timer % 600 == 0) ProjCD.Clear();
-
         Animations.Update(Timer);
         NpcSpawn.Update(Timer);
         RuleMaker.CheckTimeouts();
-    }
-    #endregion
-
-    #region 物品生成
-    public static void SpawnItem(int type, int total, Vector2 pos, int owner)
-    {
-        int remain = total;
-        while (remain > 0)
-        {
-            int stack = Math.Min(remain, ContentSamples.ItemsByType[type].maxStack);
-            int newIdx = Item.NewItem(null, pos, Vector2.Zero, type, stack);
-            if (newIdx >= 0)
-            {
-                var newItem = Main.item[newIdx];
-                newItem.velocity = Vector2.Zero;
-                newItem.playerIndexTheItemIsReservedFor = owner;
-                NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, newIdx);
-            }
-            remain -= stack;
-        }
     }
     #endregion
 
@@ -277,6 +245,77 @@ public class Plugin : TerrariaPlugin
             .Concat(rule.npcIds.Select(id => $"{Lang.GetNPCNameValue(id)}x{stack}")));
 
         plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(oldType, srcStack)} 转换为 {desc}"), color);
-    } 
+    }
     #endregion
+
+    #region 物品生成
+    public static void SpawnItem(int type, int total, Vector2 pos)
+    {
+        int remain = total;
+        while (remain > 0)
+        {
+            int stack = Math.Min(remain, ContentSamples.ItemsByType[type].maxStack);
+            int idx = Item.NewItem(null, pos, Vector2.Zero, type, stack);
+            NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, idx);
+            Pick.Add(new PickItem() { idx = idx, Type = type }); // 添加到拾取表
+            remain -= stack;
+        }
+    }
+    #endregion
+
+    #region 清理掉落物方法
+    private static void ClearItem(int i)
+    {
+        Main.item[i].TurnToAir();
+        NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
+        // 这个包可以不发 作为保底用
+        NetMessage.SendData((int)PacketTypes.SyncItemDespawn, -1, -1, null, i);
+    }
+    #endregion
+
+    #region 判断转换后的物品被拾取方法
+    private class PickItem
+    {
+        // 掉落物索引,物品ID
+        public int idx, Type;
+    }
+    private static List<PickItem> Pick = new List<PickItem>();
+    private void OnPlayerSlot(object? sender, GetDataHandlers.PlayerSlotEventArgs e)
+    {
+        // 拾取表为空则跳过
+        if (!Config.Enabled || Pick.Count == 0) return;
+
+        var plr = e.Player;
+        if (plr == null || !plr.Active) return;
+
+        // 不排除收藏物品,考虑背包可能就有材料
+        if (e.Type == 0 || e.Stack < 1 || e.BlockedSlot || e.Prefix != 0) return;
+
+        // 检查背包（58是手上物品,只检查0到57）
+        bool isInv = e.Slot >= 0 && e.Slot < NetItem.InventorySlots - 1;
+        // 检查虚空袋 （700到739）
+        bool isVoid = e.Slot >= 700 && e.Slot < 740;
+        if (!isInv && !isVoid) return;
+
+        // 倒序循环
+        for (int i = Pick.Count - 1; i >= 0; i--)
+        {
+            var p = Pick[i];
+            var item = Main.item[p.idx];
+
+            // 检查拾取表物品与背包物品相同
+            if (p.Type != e.Type) continue;
+
+            // 检查世界物品是否存在并与背包物品相同
+            if (item.active &&
+                item.type == e.Type)
+                ClearItem(p.idx);
+
+            // 从拾取表移除
+            Pick.RemoveAt(i);
+            return; // 只清除第一个匹配的物品
+        }
+    }
+    #endregion
+
 }

@@ -6,6 +6,7 @@ namespace ConvGun;
 
 public class NpcTask
 {
+    public int Owner;
     public int Type;
     public Vector2 Pos;
     public long Start;
@@ -13,25 +14,24 @@ public class NpcTask
 
 public static class NpcSpawn
 {
-    private static readonly Dictionary<int, List<NpcTask>> NpcTasks = new();
+    private static List<NpcTask> tasks = new();
 
     public static void Clear(int owner)
     {
-        if (NpcTasks.ContainsKey(owner))
-            NpcTasks.Remove(owner);
+        for (int i = tasks.Count - 1; i >= 0; i--)
+        {
+            if (tasks[i].Owner == owner)
+                tasks.RemoveAt(i);
+        }
     }
 
     public static void AddTask(int owner, int type, int total, Vector2 pos)
     {
-        if (!NpcTasks.ContainsKey(owner))
-            NpcTasks[owner] = new List<NpcTask>();
-
-        int delay = 0; // 延迟帧计数器
-        int step = Plugin.Config.SpawnDelay;
-        int offPx = Plugin.Config.SpawnOffset * 16;
-        for (int i = 0; i < total; i++)
+        int delay = 0;
+        for (int i = total - 1; i >= 0; i--)
         {
             Vector2 spaPos = pos;
+            int offPx = Plugin.Config.SpawnOff * 16;
             if (offPx > 0)
             {
                 float offX = Main.rand.Next(-offPx, offPx + 1);
@@ -41,56 +41,48 @@ public static class NpcSpawn
                 spaPos.Y = Math.Clamp(spaPos.Y, 32, (Main.maxTilesY - 1) * 16);
             }
 
-            NpcTasks[owner].Add(new NpcTask
+            tasks.Add(new NpcTask
             {
+                Owner = owner,
                 Type = type,
                 Pos = spaPos,
-                Start = Plugin.Timer + delay,
+                Start = Plugin.Timer + delay
             });
-
-            delay += step;
+            if (Plugin.Config.Delay)
+                delay += Plugin.Config.DelayTime;
         }
     }
 
     public static void Update(long timer)
     {
-        foreach (var kv in NpcTasks.ToList())
+        if (tasks.Count == 0) return;
+
+        for (int i = tasks.Count - 1; i >= 0; i--)
         {
-            int owner = kv.Key;
-            var tasks = kv.Value;
-            bool changed = false;
-
-            for (int i = tasks.Count - 1; i >= 0; i--)
+            var task = tasks[i];
+            if (timer >= task.Start)
             {
-                var task = tasks[i];
-                if (timer >= task.Start)
+                int npcIdx = NPC.NewNPC(null, (int)task.Pos.X, (int)task.Pos.Y, task.Type);
+                if (npcIdx >= 0)
                 {
-                    int npcIdx = NPC.NewNPC(null, (int)task.Pos.X, (int)task.Pos.Y, task.Type);
-                    if (npcIdx >= 0)
+                    var npc = Main.npc[npcIdx];
+                    npc.active = true;
+                    npc.netUpdate = true;
+                    NetMessage.SendData((int)PacketTypes.NpcUpdate, -1, -1, null, npcIdx);
+
+                    Animations.Effect(task.Pos);
+
+                    var settings = new ParticleOrchestraSettings
                     {
-                        var npc = Main.npc[npcIdx];
-                        npc.active = true;
-                        npc.netUpdate = true;
-                        NetMessage.SendData((int)PacketTypes.NpcUpdate, -1, -1, null, npcIdx);
-
-                        Animations.Effect(owner, task.Pos);
-
-                        var settings = new ParticleOrchestraSettings
-                        {
-                            PositionInWorld = task.Pos,
-                            MovementVector = new Vector2(npc.width, npc.height),
-                            UniqueInfoPiece = task.Type,
-                            IndexOfPlayerWhoInvokedThis = (byte)owner
-                        };
-                        ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.InScreenDungeonSpawn, settings);
-                    }
-                    tasks.RemoveAt(i);
-                    changed = true;
+                        PositionInWorld = task.Pos,
+                        MovementVector = new Vector2(npc.width, npc.height),
+                        UniqueInfoPiece = task.Type,
+                        IndexOfPlayerWhoInvokedThis = (byte)task.Owner
+                    };
+                    ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.InScreenDungeonSpawn, settings);
                 }
+                tasks.RemoveAt(i);
             }
-
-            if (changed && tasks.Count == 0)
-                NpcTasks.Remove(owner);
         }
     }
 }

@@ -16,6 +16,7 @@ public class RuleMakerState
     public int TargetID;
     public bool IsNpcTarget;       // true=怪物, false=物品
     public int Count = 1;
+    public float Luck = 0;  // 默认0
     public List<string> Conds = new();
     public long ExpireFrame;       // 超时帧（30秒后自动取消）
 }
@@ -63,7 +64,8 @@ public static class RuleMaker
         sb.AppendLine("[c/61E26C:=== 添加规则流程 ===]");
         sb.AppendLine("/sg s - 设置源物品（手持）");
         sb.AppendLine("/sg sk <数量> - 设置数量（默认1）");
-        sb.AppendLine("/sg cd <条件...> - 设置条件（如 晚上 血月）");
+        sb.AppendLine("/sg cd <条件> - 设置条件（如 晚上 血月）");
+        sb.AppendLine("/sg lk <幸运> - 设置幸运值（如0.5，影响掉落）");
         sb.AppendLine("/sg ok - 完成并保存规则");
         sb.AppendLine("/sg no - 取消添加");
         plr.SendMessage(Grad(sb.ToString()), color);
@@ -152,6 +154,26 @@ public static class RuleMaker
         string condShow = state.Conds.Count == 0 ? "无" : string.Join(",", state.Conds);
         plr.SendMessage(Grad($"设置条件({condShow}): /sg cd"), color);
         plr.SendMessage(Grad($"修改数量({state.Count}): /sg sk"), color);
+        plr.SendMessage(Grad($"修改幸运({state.Luck:F2}): /sg lk"), color);
+        plr.SendMessage(Grad("确认完成: /sg ok"), color);
+    }
+
+    /// <summary>设置幸运值</summary>
+    public static void SetLuck(TSPlayer plr, float luck)
+    {
+        var state = GetState(plr);
+        if (state == null || state.Step != 3)
+        {
+            plr.SendErrorMessage("请先设置源物品和目标");
+            return;
+        }
+        state.Luck = luck;
+        state.ExpireFrame = Plugin.Timer + 30 * 60;
+        plr.SendMessage(Grad($"\n[c/FB6E62:注:] {Icon(state.SourceID)}的幸运值已设为 {luck:F2}"), color);
+        string condShow = state.Conds.Count == 0 ? "无" : string.Join(",", state.Conds);
+        plr.SendMessage(Grad($"设置条件({condShow}): /sg cd"), color);
+        plr.SendMessage(Grad($"修改数量({state.Count}): /sg sk"), color);
+        plr.SendMessage(Grad($"修改幸运({state.Luck:F2}): /sg lk"), color);
         plr.SendMessage(Grad("确认完成: /sg ok"), color);
     }
 
@@ -172,6 +194,7 @@ public static class RuleMaker
         plr.SendMessage(Grad($"\n[c/FB6E62:注:] 已添加条件 {string.Join(", ", condNames)}"), color);
         plr.SendMessage(Grad($"设置条件({condShow}): /sg cd"), color);
         plr.SendMessage(Grad($"修改数量({state.Count}): /sg sk"), color);
+        plr.SendMessage(Grad($"修改幸运({state.Luck:F2}): /sg lk"), color);
         plr.SendMessage(Grad("确认完成: /sg ok"), color);
     }
 
@@ -220,6 +243,7 @@ public static class RuleMaker
                 npcIds = state.IsNpcTarget ? new List<int> { state.TargetID } : new List<int>(),
                 Count = state.Count,
                 Cond = condStr,
+                Luck = state.Luck,
                 Items = state.IsNpcTarget ? "" : state.TargetID.ToString(),   // 设置JSON字段
                 Npcs = state.IsNpcTarget ? state.TargetID.ToString() : ""     // 设置JSON字段
             };
@@ -237,6 +261,7 @@ public static class RuleMaker
     /// <summary>超时检查（在 OnGameUpdate 中调用）</summary>
     public static void CheckTimeouts()
     {
+        if (states.Count == 0) return;
         var expired = states.Where(kv => Plugin.Timer > kv.Value.ExpireFrame).Select(kv => kv.Key).ToList();
         foreach (var name in expired)
         {

@@ -29,6 +29,9 @@ public class ConvRule
     [JsonProperty("数量")]
     public int Count { get; set; } = 1;
 
+    [JsonProperty("幸运")]
+    public float Luck { get; set; } = 0f;
+
     private string _cond = "";
     [JsonProperty("条件")]
     public string Cond

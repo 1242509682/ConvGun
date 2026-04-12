@@ -22,12 +22,14 @@ internal class Configuration
     [JsonProperty("冷却秒数", Order = 3)]
     public int Sec { get; set; } = 2;
     [JsonProperty("动画间隔", Order = 4)]
-    public int DelayFrames { get; set; } = 90;
-    [JsonProperty("生成偏移", Order = 5)]
-    public int SpawnOffset { get; set; } = 5;
-    [JsonProperty("生成间隔", Order = 6)]
-    public int SpawnDelay { get; set; } = 15;
-    [JsonProperty("随机动画", Order = 7)]
+    public int AnimTime { get; set; } = 90;
+    [JsonProperty("动画偏移", Order = 5)]
+    public int SpawnOff { get; set; } = 5;
+    [JsonProperty("延迟动画", Order = 6)]
+    public bool Delay { get; set; } = true;
+    [JsonProperty("延迟间隔", Order = 7)]
+    public int DelayTime { get; set; } = 30;
+    [JsonProperty("随机动画", Order = 8)]
     public ParticleOrchestraType[] AnimType { get; set; } =
     [
         ParticleOrchestraType.ShimmerArrow,
@@ -44,7 +46,7 @@ internal class Configuration
         ParticleOrchestraType.Count,
     ];
 
-    [JsonProperty("转换规则列表", Order = 8)]
+    [JsonProperty("转换规则列表", Order = 9)]
     public List<ConvRule> ConvRules { get; set; } = new();
 
     // 规则索引：源物品ID -> 规则列表（不超过10字符）
@@ -57,8 +59,7 @@ internal class Configuration
     {
         ConvRules.Clear();
 
-        AddMixedRule(ItemID.PlatinumCoin, new List<int> { ItemID.GoldCoin }, new List<int> { NPCID.ShimmerSlime }, 0, 2);
-        AddMixedRule(ItemID.PlatinumCoin, new List<int>(), new List<int> { NPCID.Zombie, NPCID.DemonEye }, 43, 2);
+        ABn(ItemID.PlatinumCoin,NPCID.ShimmerSlime,0,2);
 
         // 迁移自定义微光转换表
         AB(ItemID.JungleKey, ItemID.PiranhaGun, 15);
@@ -213,17 +214,17 @@ internal class Configuration
         });
     }
 
-    /// <summary>添加混合规则（同时包含物品和怪物）</summary>
-    private void AddMixedRule(int source, List<int> items, List<int> npcs, int condIdx = 0, int count = 1)
+    private void ABn(int source, int target, int condIdx = 0, int count = 1)
     {
         string condStr = condIdx == 0 ? "" : condIdx.ToString();
         ConvRules.Add(new ConvRule
         {
             SourceID = source,
-            Items = string.Join(",", items),   // 列表转为逗号分隔字符串
-            Npcs = string.Join(",", npcs),
+            Items = string.Empty,
+            Npcs = target.ToString(),
             Count = count,
-            Cond = condStr
+            Cond = condStr,
+            Luck = 0.5f
         });
     }
 

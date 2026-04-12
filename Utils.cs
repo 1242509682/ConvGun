@@ -125,8 +125,8 @@ internal class Utils
     #endregion
 
     #region 进度条件
-    private static Dictionary<string, int> condMap = new();  // 条件名 -> ID
-    private static string[] condNames = new string[88];      // ID -> 条件名（复用原 CondNames）
+    private static Dictionary<string, int> condMap = new();  // 条件名 -> idx
+    private static string[] condNames = new string[88];      // idx -> 条件名（复用原 CondNames）
     /// <summary>从配置的 Reference 构建映射表（只执行一次）</summary>
     // 在 Utils 类中添加静态初始化方法
     public static void InitCondMap(Configuration cfg)

@@ -61,6 +61,13 @@ public static class CmdMain
                 }
 
                 break;
+            case "lk":
+            case "luck":
+                if (args.Parameters.Count > 1 && float.TryParse(args.Parameters[1], out float lk))
+                    RuleMaker.SetLuck(plr, lk);
+                else
+                    plr.SendErrorMessage("用法: /sg lk <幸运值> (如 0.5)");
+                break;
             case "all":
                 ListConditions(args);
                 break;
@@ -197,11 +204,11 @@ public static class CmdMain
         var sb = new StringBuilder();
         sb.AppendLine($"[c/AD89D5:微光转换枪]");
         sb.AppendLine($"插件开关: {(cfg.Enabled ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}");
-        sb.AppendLine($"动画帧数: {cfg.DelayFrames}");
+        sb.AppendLine($"动画帧数: {cfg.AnimTime}");
         sb.AppendLine($"规则数量: {cfg.ConvRules.Count}");
         sb.AppendLine($"冷却秒数: {cfg.Sec}");
         sb.AppendLine($"碰撞体积: {cfg.Hitbox}");
-        sb.AppendLine($"生成偏移: {cfg.SpawnOffset}格, 间隔: {cfg.SpawnDelay}帧");
+        sb.AppendLine($"生成偏移: {cfg.SpawnOff}格, 间隔: {cfg.DelayTime}帧");
 
         if (plr.RealPlayer)
             plr.SendMessage(Grad(sb.ToString()), color);

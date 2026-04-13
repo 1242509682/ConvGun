@@ -64,7 +64,7 @@ internal class Configuration
         };
         EXProj.Types.Sort();  // 原地排序
 
-        AB(ItemID.PlatinumCoin,ItemID.LuckyClover, 0,2);
+        AB(ItemID.PlatinumCoin, ItemID.LuckyClover, 0, 1, luck: 0.25f);
         ABA(ItemID.LuckyClover, ItemID.WiltedClover);
 
         // 迁移自定义微光转换表
@@ -80,7 +80,7 @@ internal class Configuration
         ABA(ItemID.Compass, ItemID.DepthMeter);
 
         AB(ItemID.LifeformAnalyzer, ItemID.Radar);
-        AB(ItemID.Radar, ItemID.TallyCounter,9);
+        AB(ItemID.Radar, ItemID.TallyCounter, 9);
         AB(ItemID.TallyCounter, ItemID.LifeformAnalyzer);
 
         ABCA(ItemID.DPSMeter, ItemID.MetalDetector, ItemID.Stopwatch);
@@ -208,7 +208,7 @@ internal class Configuration
     #endregion
 
     #region 辅助添加规则方法
-    private void AB(int source, int target, int condIdx = 0, int count = 1)
+    private void AB(int source, int target, int condIdx = 0, int count = 1, float luck = 0)
     {
         string condStr = condIdx == 0 ? "" : condIdx.ToString();
         ConvRules.Add(new ConvRule
@@ -217,6 +217,7 @@ internal class Configuration
             Items = target.ToString(),      // 单个ID转为字符串
             Npcs = string.Empty,
             Count = count,
+            Luck = luck,
             Cond = condStr
         });
     }

@@ -146,10 +146,10 @@ public class Plugin : TerrariaPlugin
                 if (matched.Count > 0)
                 {
                     Animations.Effect(from);
-                    EXProj.Spawn(from);
                     ClearItem(i);
                     Animations.Fly(from, to, type);
 
+                    bool isLuck = false;
                     foreach (var rule in matched)   // 执行所有匹配的规则
                     {
                         int total = rule.Count * stack;
@@ -161,12 +161,15 @@ public class Plugin : TerrariaPlugin
 
                         if (rule.Luck != 0f)
                         {
+                            isLuck = rule.Luck > 0;
                             float luck = rule.Luck * stack;
                             plr.TPlayer.luck += luck;
                             plr.SendData(PacketTypes.UpdatePlayerLuckFactors, "", plr.Index, luck);
-                            plr.SendMessage(Grad($"恭喜！转换 {Icon(type)} 获得 {luck:F2} 点运气！"), color);
+                            plr.SendMessage(Grad($"恭喜！转换 {Icon(type)} 获得 {luck:F2} 点运气！当前幸运:{plr.TPlayer.luck}"), color);
                         }
                     }
+
+                    EXProj.Spawn(from, isLuck: isLuck);
 
                     ProjCD[proj.owner] = Timer;
                     return;
@@ -275,7 +278,7 @@ public class Plugin : TerrariaPlugin
             .Concat(rule.npcIds.Select(id => $"{Lang.GetNPCNameValue(id)}x{stack}")));
 
         plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(oldType, srcStack)} 转换为 {desc}"), color);
-    } 
+    }
     #endregion
 
     #region 物品生成

@@ -37,6 +37,7 @@ public static class EXProj
         public long Expire;
         public long StartTime;
         public bool UseDynamic;
+        public bool Luck;
     }
 
     private static List<ProjState> upList = new();
@@ -46,7 +47,7 @@ public static class EXProj
     #region 对外接口
     public static void Clear() => upList.Clear();
 
-    public static void Spawn(Vector2 from, int extra = 0)
+    public static void Spawn(Vector2 from, int extra = 0, bool isLuck = false)
     {
         var exc = Plugin.Config.EXProj;
         if (!exc.Enabled || exc.Types == null || exc.Types.Count == 0 || exc.Cnt <= 0) return;
@@ -81,8 +82,19 @@ public static class EXProj
                 Off = Vector2.Zero,
                 Expire = expire,
                 StartTime = start,
-                UseDynamic = exc.Dynamic ? Main.rand.Next(2) == 0 : false
+                UseDynamic = exc.Dynamic ? Main.rand.Next(2) == 0 : false,
+                Luck = isLuck
             });
+
+            if (isLuck)
+            {
+                var set = new ParticleOrchestraSettings
+                {
+                    PositionInWorld = pos,
+                    MovementVector = vel,
+                };
+                ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.StormLightning, set);
+            }
         }
     }
 
@@ -118,8 +130,18 @@ public static class EXProj
                     NetMessage.SendData((int)PacketTypes.ProjectileNew, -1, -1, null, idx2);
                     p.Idx = idx2;
                     upList.Add(p);
+                    spaList.RemoveAt(i);
+
+                    if (p.Luck)
+                    {
+                        var set = new ParticleOrchestraSettings
+                        {
+                            PositionInWorld = pos,
+                            MovementVector = vel,
+                        };
+                        ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.StormLightning, set);
+                    }
                 }
-                spaList.RemoveAt(i);
             }
         }
 

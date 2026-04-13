@@ -64,7 +64,8 @@ internal class Configuration
         };
         EXProj.Types.Sort();  // 原地排序
 
-        ABn(ItemID.PlatinumCoin,NPCID.ShimmerSlime,0,2);
+        AB(ItemID.PlatinumCoin,ItemID.LuckyClover, 0,2);
+        ABA(ItemID.LuckyClover, ItemID.WiltedClover);
 
         // 迁移自定义微光转换表
         AB(ItemID.JungleKey, ItemID.PiranhaGun, 15);

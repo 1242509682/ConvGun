@@ -7,6 +7,7 @@ namespace ConvGun;
 
 public class Animations
 {
+    #region 物品动画任务（生成转换后的物品）
     private class AnimTask
     {
         public int OldType;
@@ -15,7 +16,6 @@ public class Animations
         public Vector2 To;
         public long Start;
     }
-
     private static List<AnimTask> anims = new();
 
     public static void AddTask(int oldType, int newType, int stack, Vector2 to, int delay = 0)
@@ -45,7 +45,9 @@ public class Animations
             }
         }
     }
+    #endregion
 
+    #region 基础特效
     public static void Fly(Vector2 from, Vector2 to, int itemType)
     {
         Effect(from);
@@ -73,4 +75,5 @@ public class Animations
         ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.DeadCellsMushroomBoiTargetFound, settings);
         ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.HeroicisSetSpawnSound, settings);
     }
+    #endregion
 }

@@ -14,14 +14,14 @@ public class NpcTask
 
 public static class NpcSpawn
 {
-    private static List<NpcTask> tasks = new();
+    private static List<NpcTask> spaList = new();
 
     public static void Clear(int owner)
     {
-        for (int i = tasks.Count - 1; i >= 0; i--)
+        for (int i = spaList.Count - 1; i >= 0; i--)
         {
-            if (tasks[i].Owner == owner)
-                tasks.RemoveAt(i);
+            if (spaList[i].Owner == owner)
+                spaList.RemoveAt(i);
         }
     }
 
@@ -41,7 +41,7 @@ public static class NpcSpawn
                 spaPos.Y = Math.Clamp(spaPos.Y, 32, (Main.maxTilesY - 1) * 16);
             }
 
-            tasks.Add(new NpcTask
+            spaList.Add(new NpcTask
             {
                 Owner = owner,
                 Type = type,
@@ -55,11 +55,11 @@ public static class NpcSpawn
 
     public static void Update(long timer)
     {
-        if (tasks.Count == 0) return;
+        if (spaList.Count == 0) return;
 
-        for (int i = tasks.Count - 1; i >= 0; i--)
+        for (int i = spaList.Count - 1; i >= 0; i--)
         {
-            var task = tasks[i];
+            var task = spaList[i];
             if (timer >= task.Start)
             {
                 int npcIdx = NPC.NewNPC(null, (int)task.Pos.X, (int)task.Pos.Y, task.Type);
@@ -81,7 +81,7 @@ public static class NpcSpawn
                     };
                     ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.InScreenDungeonSpawn, settings);
                 }
-                tasks.RemoveAt(i);
+                spaList.RemoveAt(i);
             }
         }
     }

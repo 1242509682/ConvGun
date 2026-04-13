@@ -1,4 +1,5 @@
 ﻿using Microsoft.Xna.Framework;
+using Terraria.GameContent.Drawing;
 using Terraria;
 using Terraria.ID;
 using TerrariaApi.Server;
@@ -15,7 +16,7 @@ public class Plugin : TerrariaPlugin
     public static string PluginName => "微光转换枪";
     public override string Name => PluginName + "加强版";
     public override string Author => "羽学、星梦";
-    public override Version Version => new(1, 0, 3);
+    public override Version Version => new(1, 0, 4);
     public override string Description => "微光枪命中掉落物时，按规则转换，支持条件与动画；无规则时回退原版微光或分解";
     #endregion
 
@@ -80,10 +81,11 @@ public class Plugin : TerrariaPlugin
         if (plr != null) RuleMaker.Clear(plr.Name);
         if (ProjCD.ContainsKey(args.Who)) ProjCD.Remove(args.Who);
         NpcSpawn.Clear(args.Who);
+        EXProj.Clear();
     }
     #endregion
 
-    #region 弹幕碰撞检测
+    #region 弹幕碰撞检测（微光枪）
     private static readonly Dictionary<int, long> ProjCD = new();
     private void OnProjAI(ProjectileAiUpdateEventArgs args)
     {
@@ -99,7 +101,6 @@ public class Plugin : TerrariaPlugin
 
         var box = proj.Hitbox;
         box.Inflate(Config.Hitbox, Config.Hitbox);
-        float rangeSq = (Config.Hitbox * 16 + 100) * (Config.Hitbox * 16 + 100); // 距离平方粗筛
 
         // 规则制作模式
         var state = RuleMaker.GetState(plr);
@@ -119,7 +120,7 @@ public class Plugin : TerrariaPlugin
             }
         }
 
-        // 物品检测
+        // 物品检测与转换
         for (int i = 0; i < Main.maxItems; i++)
         {
             var item = Main.item[i];
@@ -132,37 +133,38 @@ public class Plugin : TerrariaPlugin
                 return;
             }
 
-            int itemType = item.type;
-            int srcStack = item.stack;
+            int type = item.type;
+            int stack = item.stack;
             Vector2 from = item.Center;
-            Vector2 pos = from - new Vector2(0, Config.Height * 16);
+            Vector2 to = from - new Vector2(0, Config.Height * 16);
 
             // 1. 自定义规则（使用索引和整数条件）
-            if (Config.ruleMap.TryGetValue(itemType, out var candidates))
+            if (Config.ruleMap.TryGetValue(type, out var candidates))
             {
                 // 找出所有匹配当前条件的规则
                 var matched = candidates.Where(r => Utils.CheckConds(r.condIds, plr.TPlayer)).ToList();
                 if (matched.Count > 0)
                 {
                     Animations.Effect(from);
+                    EXProj.Spawn(from);
                     ClearItem(i);
-                    Animations.Fly(from, pos, itemType);
+                    Animations.Fly(from, to, type);
 
                     foreach (var rule in matched)   // 执行所有匹配的规则
                     {
-                        int total = rule.Count * srcStack;
+                        int total = rule.Count * stack;
                         foreach (int id in rule.itemIds)
-                            Animations.AddTask(itemType, id, total, pos);
+                            Animations.AddTask(type, id, total, to);
                         foreach (int npcId in rule.npcIds)
                             NpcSpawn.AddTask(proj.owner, npcId, total, from);
-                        SendMsg(plr, itemType, srcStack, rule);
+                        SendMsg(plr, type, stack, rule);
 
                         if (rule.Luck != 0f)
                         {
-                            float luck = rule.Luck * srcStack;
+                            float luck = rule.Luck * stack;
                             plr.TPlayer.luck += luck;
                             plr.SendData(PacketTypes.UpdatePlayerLuckFactors, "", plr.Index, luck);
-                            plr.SendMessage(Grad($"恭喜！转换 {Icon(itemType)} 获得 {luck:F2} 点运气！当前幸运值：{plr.TPlayer.luck:F2}"), color);
+                            plr.SendMessage(Grad($"恭喜！转换 {Icon(type)} 获得 {luck:F2} 点运气！"), color);
                         }
                     }
 
@@ -172,48 +174,75 @@ public class Plugin : TerrariaPlugin
             }
 
             // 2. 原版微光转换（已使用缓存）
-            int origType = Utils.GetShimmerTransform(itemType);
-            if (origType != 0 && origType != itemType)
+            int ShimmerType = Utils.GetShimmerTransform(type);
+            if (ShimmerType != 0 && ShimmerType != type)
             {
                 Animations.Effect(from);
+                EXProj.Spawn(from);
                 ClearItem(i);
-                Animations.Fly(from, pos, itemType);
-                Animations.AddTask(itemType, origType, srcStack, pos);
-                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 转换为 {Icon(origType, srcStack)}"), color);
-
+                Animations.Fly(from, to, type);
+                Animations.AddTask(type, ShimmerType, stack, to);
+                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(type, stack)} 转换为 {Icon(ShimmerType, stack)}"), color);
                 ProjCD[proj.owner] = Timer;
                 return;
             }
 
             // 3. 原版分解（已使用缓存）
-            var mats = Utils.GetDecraft(itemType, srcStack);
+            var mats = Utils.GetDecraft(type, stack);
             if (mats.Count > 0)
             {
                 Animations.Effect(from);
                 ClearItem(i);
-                Animations.Fly(from, pos, itemType);
+                Animations.Fly(from, to, type);
 
-                int delay = 0;
-                foreach (var mat in mats)
+                // 收集所有材料的生成位置
+                List<Vector2> matPositions = new List<Vector2>();
+                int offPx = Config.SpawnOff * 16;
+
+                for (int m = 0; m < mats.Count; m++)
                 {
-                    Vector2 matPos = pos;
-                    int offPx = Config.SpawnOff * 16;
+                    var mat = mats[m];
+                    Vector2 matPos = to;
                     if (offPx > 0)
                     {
                         float offX = Main.rand.Next(-offPx, offPx + 1);
                         float offY = Main.rand.Next(-offPx, offPx + 1);
-                        matPos = pos + new Vector2(offX, offY);
+                        matPos = to + new Vector2(offX, offY);
                         matPos.X = Math.Clamp(matPos.X, 32, (Main.maxTilesX - 1) * 16);
                         matPos.Y = Math.Clamp(matPos.Y, 32, (Main.maxTilesY - 1) * 16);
                     }
-                    Animations.AddTask(itemType, mat.typ, mat.stack, matPos, delay);
+                    matPositions.Add(matPos);
 
-                    if (Config.Delay)
-                        delay += Config.DelayTime;
+                    // 播放预览材料
+                    var set = new ParticleOrchestraSettings
+                    {
+                        PositionInWorld = from,
+                        MovementVector = matPos - from,
+                        UniqueInfoPiece = mat.typ,
+                        IndexOfPlayerWhoInvokedThis = 0
+                    };
+                    ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.ItemTransfer, set);
+                }
+
+                // 计算额外寿命（最后一个物品动画任务的延迟帧数）
+                int Life = 0;
+                if (Config.Delay && mats.Count > 1)
+                    Life = (mats.Count - 1) * Config.DelayTime + Config.AnimTime;
+                else if (mats.Count > 0)
+                    Life = Config.AnimTime; // 无延迟时，也需要等待动画间隔
+                EXProj.Spawn(from, Life);
+
+                // 依次添加动画任务
+                int delay = 0;
+                for (int m = 0; m < mats.Count; m++)
+                {
+                    var mat = mats[m];
+                    Animations.AddTask(type, mat.typ, mat.stack, matPositions[m], delay);
+                    if (Config.Delay) delay += Config.DelayTime;
                 }
 
                 string matsStr = string.Join(" ", mats.Select(m => Icon(m.typ, m.stack)));
-                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(itemType, srcStack)} 分解出\n {matsStr}"), color2);
+                plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(type, stack)} 分解出\n {matsStr}"), color2);
 
                 ProjCD[proj.owner] = Timer;
                 return;
@@ -233,6 +262,7 @@ public class Plugin : TerrariaPlugin
         Animations.Update(Timer);
         NpcSpawn.Update(Timer);
         RuleMaker.CheckTimeouts();
+        EXProj.Update(Timer);
     }
     #endregion
 
@@ -245,7 +275,7 @@ public class Plugin : TerrariaPlugin
             .Concat(rule.npcIds.Select(id => $"{Lang.GetNPCNameValue(id)}x{stack}")));
 
         plr.SendMessage(Grad($"{plr.Name} 使用 {Icon(plr.SelectedItem.type)} 将 {Icon(oldType, srcStack)} 转换为 {desc}"), color);
-    }
+    } 
     #endregion
 
     #region 物品生成
@@ -274,17 +304,12 @@ public class Plugin : TerrariaPlugin
     #endregion
 
     #region 判断转换后的物品被拾取方法
-    private class PickItem
-    {
-        // 掉落物索引,物品ID
-        public int idx, Type;
-    }
-    private static List<PickItem> Pick = new List<PickItem>();
+    private class PickItem { public int idx, Type; }
+    private static List<PickItem> Pick = new();
     private void OnPlayerSlot(object? sender, GetDataHandlers.PlayerSlotEventArgs e)
     {
         // 拾取表为空则跳过
         if (!Config.Enabled || Pick.Count == 0) return;
-
         var plr = e.Player;
         if (plr == null || !plr.Active) return;
 

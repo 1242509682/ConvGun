@@ -18,7 +18,7 @@ internal class Configuration
     [JsonProperty("碰撞体积", Order = 1)]
     public int Hitbox { get; set; } = 12;
     [JsonProperty("上升格数", Order = 2)]
-    public int Height { get; set; } = 5;
+    public int Height { get; set; } = 10;
     [JsonProperty("冷却秒数", Order = 3)]
     public int Sec { get; set; } = 2;
     [JsonProperty("动画间隔", Order = 4)]
@@ -32,24 +32,18 @@ internal class Configuration
     [JsonProperty("随机动画", Order = 8)]
     public ParticleOrchestraType[] AnimType { get; set; } =
     [
-        ParticleOrchestraType.ShimmerArrow,
+        ParticleOrchestraType.ShimmerTownNPCSend,
         ParticleOrchestraType.ShimmerTownNPC,
-        ParticleOrchestraType.DeadCellsMushroomBoiExplosion,
-        ParticleOrchestraType.DeadCellsDownDashExplosion,
-        ParticleOrchestraType.DeadCellsBarrelExplosion,
-        ParticleOrchestraType.DeadCellsMushroomBoiTargetFound,
         ParticleOrchestraType.RainbowBoulder1,
-        ParticleOrchestraType.RainbowBoulder4,
+        ParticleOrchestraType.RainbowBoulderPetBounce,
         ParticleOrchestraType.StormLightning,
-        ParticleOrchestraType.CattivaHit,
-        ParticleOrchestraType.PaladinsHammerShockwave,
-        ParticleOrchestraType.Count,
     ];
+    [JsonProperty("弹幕特效", Order = 9)]
+    public EXC EXProj = new();
 
-    [JsonProperty("转换规则列表", Order = 9)]
+    [JsonProperty("转换规则列表", Order = 10)]
     public List<ConvRule> ConvRules { get; set; } = new();
 
-    // 规则索引：源物品ID -> 规则列表（不超过10字符）
     [JsonIgnore]
     public Dictionary<int, List<ConvRule>> ruleMap = new();
     #endregion
@@ -58,6 +52,17 @@ internal class Configuration
     public void SetDefault()
     {
         ConvRules.Clear();
+
+        EXProj = new()
+        {
+            Types =
+            [
+                ProjectileID.MagicMissile,ProjectileID.Flamelash,
+                ProjectileID.RainbowRodBullet,ProjectileID.WaterStream,
+                ProjectileID.IchorSplash,ProjectileID.DD2PhoenixBowShot
+            ],
+        };
+        EXProj.Types.Sort();  // 原地排序
 
         ABn(ItemID.PlatinumCoin,NPCID.ShimmerSlime,0,2);
 
@@ -176,6 +181,7 @@ internal class Configuration
             Utils.InitCondMap(cfg);   // 新增：使用当前配置初始化映射表
             cfg.BuildRuleIdx();
             cfg.AutoRuleDesc();
+            cfg.EXProj.Types.Sort();  // 原地排序
             return cfg;
         }
         catch (JsonReaderException ex)

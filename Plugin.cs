@@ -16,7 +16,7 @@ public class Plugin : TerrariaPlugin
     public static string PluginName => "微光转换枪";
     public override string Name => PluginName + "加强版";
     public override string Author => "羽学、星梦";
-    public override Version Version => new(1, 0, 4);
+    public override Version Version => new(1, 0, 5);
     public override string Description => "微光枪命中掉落物时，按规则转换，支持条件与动画；无规则时回退原版微光或分解";
     #endregion
 
@@ -81,7 +81,10 @@ public class Plugin : TerrariaPlugin
         if (plr != null) RuleMaker.Clear(plr.Name);
         if (ProjCD.ContainsKey(args.Who)) ProjCD.Remove(args.Who);
         NpcSpawn.Clear(args.Who);
-        EXProj.Clear();
+        EXProj.ClrPlayer(args.Who);
+
+        if (TShock.Utils.GetActivePlayerCount() == 0)
+            EXProj.Clear();
     }
     #endregion
 
@@ -99,6 +102,19 @@ public class Plugin : TerrariaPlugin
 
         if (ProjCD.TryGetValue(proj.owner, out long last) && Timer - last < Config.Sec * 60) return;
 
+        // 强制刷新身处图格（ 附近合成站检测字段 : plr.TPlayer.adjTile[图格ID] ）
+        plr.TPlayer.AdjTiles();
+        if (plr.TPlayer.alchemyTable)
+        {
+            plr.SendMessage(Grad($"您附近存在" +
+                                 $" {Icon(ItemID.AlchemyTable)} 或 " +
+                                 $"{Icon(ItemID.DeadCellsPotionStation)} " +
+                                 $"已禁止转换"), color);
+
+            ProjCD[proj.owner] = Timer;   // 设置冷却，避免刷屏
+            return;
+        }
+
         var box = proj.Hitbox;
         box.Inflate(Config.Hitbox, Config.Hitbox);
 
@@ -115,6 +131,7 @@ public class Plugin : TerrariaPlugin
                 if (box.Intersects(npc.Hitbox))
                 {
                     RuleMaker.SetTargetNpc(plr, npc.type);
+                    ProjCD[proj.owner] = Timer;   // 设置冷却
                     return;
                 }
             }
@@ -130,6 +147,7 @@ public class Plugin : TerrariaPlugin
             if (state != null && state.Step == 2)
             {
                 RuleMaker.SetTargetItem(plr, item.type);
+                ProjCD[proj.owner] = Timer;   // 设置冷却
                 return;
             }
 
@@ -169,7 +187,7 @@ public class Plugin : TerrariaPlugin
                         }
                     }
 
-                    EXProj.Spawn(from, isLuck: isLuck);
+                    EXProj.Spawn(proj.owner, from, isLuck: isLuck);
 
                     ProjCD[proj.owner] = Timer;
                     return;
@@ -181,7 +199,7 @@ public class Plugin : TerrariaPlugin
             if (ShimmerType != 0 && ShimmerType != type)
             {
                 Animations.Effect(from);
-                EXProj.Spawn(from);
+                EXProj.Spawn(proj.owner, from);
                 ClearItem(i);
                 Animations.Fly(from, to, type);
                 Animations.AddTask(type, ShimmerType, stack, to);
@@ -233,7 +251,7 @@ public class Plugin : TerrariaPlugin
                     Life = (mats.Count - 1) * Config.DelayTime + Config.AnimTime;
                 else if (mats.Count > 0)
                     Life = Config.AnimTime; // 无延迟时，也需要等待动画间隔
-                EXProj.Spawn(from, Life);
+                EXProj.Spawn(proj.owner, from, Life);
 
                 // 依次添加动画任务
                 int delay = 0;
@@ -345,5 +363,4 @@ public class Plugin : TerrariaPlugin
         }
     }
     #endregion
-
 }
